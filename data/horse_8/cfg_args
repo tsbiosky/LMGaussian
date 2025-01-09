@@ -1,0 +1,1 @@
+Namespace(sh_degree=3, source_path='/mnt/nas-a6000/hanyangyu/projects/tpami/lm-gaussian_v2/output/horse_8', model_path='./data/horse_8', images='images', dataset='', resolution=2, white_background=False, data_device='cuda', eval=False, use_decoupled_appearance=True, use_coord_map=False, disable_filter3D=False, kernel_size=0.0)

@@ -12,7 +12,6 @@ utils/__pycache__
 *.egg-info
 debug*
 dtu_eval/Offical_DTU_Dataset
-*.sh
 *.pyc
 .vscode
 output*/
@@ -51,7 +50,6 @@ pytorch3d/
 SIBR*
 lora*
 horse.json
-data/
 clip-vit-large-patch14/
 submodules/msplat
 submodules/simple-knn
