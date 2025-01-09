@@ -70,7 +70,6 @@ def loadCam(args, id, cam_info, resolution_scale):
     extrinsic[:3,:3] = cam_info.R.T
     extrinsic[:3,3] = cam_info.T
     extrinsic[3,3] = 1
-
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,

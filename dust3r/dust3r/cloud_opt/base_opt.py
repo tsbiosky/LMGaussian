@@ -254,8 +254,22 @@ class BasePCOptimizer (nn.Module):
     def get_depthmaps(self, raw=False):
         raise NotImplementedError()
 
+
+    
+    def clean_pointcloud(self, **kw):
+        cams = inv(self.get_im_poses())
+        K = self.get_intrinsics()
+        depthmaps = self.get_depthmaps()
+        all_pts3d = self.get_pts3d()
+
+        new_im_confs = clean_pointcloud(self.im_conf, K, cams, depthmaps, all_pts3d, **kw)
+
+        for i, new_conf in enumerate(new_im_confs):
+            self.im_conf[i].data[:] = new_conf
+        return self
+
     @torch.no_grad()
-    def clean_pointcloud(self, tol=0.001, max_bad_conf=0):
+    def clean_pointcloud_reprojection(self, tol=0.001, max_bad_conf=0):
         """ Method: 
         1) express all 3d points in each camera coordinate frame
         2) if they're in front of a depthmap --> then lower their confidence
@@ -267,6 +281,9 @@ class BasePCOptimizer (nn.Module):
         res = deepcopy(self)
 
         for i, pts3d in enumerate(self.depth_to_pts3d()):
+            Hi, Wi = self.imshapes[i]
+            img_i = torch.full((Hi, Wi, self.n_imgs-1), -1, dtype=torch.float32, device=pts3d.device)
+            index =0
             for j in range(self.n_imgs):
                 if i == j:
                     continue
@@ -282,16 +299,46 @@ class BasePCOptimizer (nn.Module):
                 msk_i = (proj_depth > 0) & (0 <= u) & (u < Wj) & (0 <= v) & (v < Hj)
                 msk_j = v[msk_i], u[msk_i]
 
-                # find bad points = those in front but less confident
-                bad_points = (proj_depth[msk_i] < (1-tol) * depthmaps[j][msk_j]
-                              ) & (res.im_conf[i][msk_i] < res.im_conf[j][msk_j])
+                # # find bad points = those in front but less confident
+                # bad_points = (proj_depth[msk_i] < (1-tol) * depthmaps[j][msk_j]
+                #               ) & (res.im_conf[i][msk_i] < res.im_conf[j][msk_j])
 
-                bad_msk_i = msk_i.clone()
-                bad_msk_i[msk_i] = bad_points
-                res.im_conf[i][bad_msk_i] = res.im_conf[i][bad_msk_i].clip_(max=max_bad_conf)
+                # reprojection error
+                observed_depth = depthmaps[j][msk_j]
+                u_f, v_f = u[msk_i].float(), v[msk_i].float()
+                observed_3d_points = torch.stack((u_f * observed_depth, v_f * observed_depth, observed_depth), dim=-1)
+                observed_3d_points = geotrf(inv(K[j]), observed_3d_points)
+
+                # Transform observed 3D points from camera j's to world coordinates
+                observed_3d_points_world = geotrf(inv(cams[j]), observed_3d_points)
+
+                # Transform observed 3D points from world coordinates to camera i's coordinate system
+                observed_3d_points_in_i = geotrf(cams[i], observed_3d_points_world)
+
+                # Project back to camera i's image plane
+                reprojected_points = geotrf(K[i], observed_3d_points_in_i, norm=1, ncol=2)
+
+                # Calculate reprojection error
+                proi = geotrf(cams[i], pts3d[:Hi*Wi]).reshape(Hi, Wi, 3)
+                original_points = geotrf(K[i], proi[msk_i], norm=1, ncol=2)
+                reprojection_error = torch.norm(reprojected_points - original_points, dim=-1)
+
+                # # find bad points based on reprojection error
+                # bad_points = reprojection_error > 60              
+                # bad_msk_i = msk_i.clone()
+                # bad_msk_i[msk_i] = bad_points
+                # res.im_conf[i][bad_msk_i] = res.im_conf[i][bad_msk_i].clip_(max=max_bad_conf)
+                img_i[..., index][msk_i] = reprojection_error
+                index +=1
+
+            valid_img = torch.clamp(img_i, min=0) 
+            mean_reproj_error = valid_img.sum(dim=-1) / (valid_img > 0).sum(dim=-1).clamp(min=1)
+            final_coords = torch.full_like(valid_img[:,:,0], False, dtype=bool)
+            final_coords = mean_reproj_error > 200
+            res.im_conf[i][final_coords] = res.im_conf[i][final_coords].clip_(max=max_bad_conf)
 
         return res   
-
+    
     @torch.no_grad()
     def clean_pointcloud_final(self, tol=0.001, max_bad_conf=0):
         """ Method: 
@@ -305,6 +352,9 @@ class BasePCOptimizer (nn.Module):
         res = deepcopy(self)
 
         for i, pts3d in enumerate(self.depth_to_pts3d()):
+            Hi, Wi = self.imshapes[i]
+            img_i = torch.full((Hi, Wi, self.n_imgs-1), -1, dtype=torch.float32, device=pts3d.device)
+            index =0
             for j in range(self.n_imgs):
                 if i == j:
                     continue
@@ -323,13 +373,13 @@ class BasePCOptimizer (nn.Module):
                 # find bad points = those in front but less confident
                 bad_points = (proj_depth[msk_i] < (1-tol) * depthmaps[j][msk_j]
                               ) & (res.im_conf[i][msk_i] < res.im_conf[j][msk_j])
-
+             
                 bad_msk_i = msk_i.clone()
                 bad_msk_i[msk_i] = bad_points
                 res.im_conf[i][bad_msk_i] = res.im_conf[i][bad_msk_i].clip_(max=max_bad_conf)
-   
 
-        return res   
+
+        return res 
 
     def forward(self, iter = 0, ret_details=False):
         pw_poses = self.get_pw_poses()  # cam-to-world
@@ -343,8 +393,8 @@ class BasePCOptimizer (nn.Module):
         loss = 0
         if ret_details:
             details = -torch.ones((self.n_imgs, self.n_imgs))
-        if iter > 100 and iter % 50 == 0:
-            self.clean_pointcloud()
+        if iter > 200 and iter % 50 == 0:
+            self = self.clean_pointcloud()
         if self.depth_path != None:
             #add depth constrain
             depths = self.get_depthmaps()
@@ -423,6 +473,45 @@ class BasePCOptimizer (nn.Module):
         viz.show(**kw)
         return viz
 
+@torch.no_grad()
+def clean_pointcloud( im_confs, K, cams, depthmaps, all_pts3d, 
+                    tol=0.001, bad_conf=0, dbg=()):
+    """ Method: 
+    1) express all 3d points in each camera coordinate frame
+    2) if they're in front of a depthmap --> then lower their confidence
+    """
+    assert len(im_confs) == len(cams) == len(K) == len(depthmaps) == len(all_pts3d)
+    assert 0 <= tol < 1
+    res = [c.clone() for c in im_confs]
+
+    # reshape appropriately
+    all_pts3d = [p.view(*c.shape,3) for p,c in zip(all_pts3d, im_confs)]
+    depthmaps = [d.view(*c.shape) for d,c in zip(depthmaps, im_confs)]
+    
+    for i, pts3d in enumerate(all_pts3d):
+        for j in range(len(all_pts3d)):
+            if i == j: continue
+
+            # project 3dpts in other view
+            proj = geotrf(cams[j], pts3d)
+            proj_depth = proj[:,:,2]
+            u,v = geotrf(K[j], proj, norm=1, ncol=2).round().long().unbind(-1)
+
+            # check which points are actually in the visible cone
+            H, W = im_confs[j].shape
+            msk_i = (proj_depth > 0) & (0 <= u) & (u < W) & (0 <= v) & (v < H)
+            msk_j = v[msk_i], u[msk_i]
+
+            # find bad points = those in front but less confident
+            bad_points = (proj_depth[msk_i] < (1-tol) * depthmaps[j][msk_j]) & (res[i][msk_i] < res[j][msk_j])
+            # reprojection error
+            # bad_points = (torch.abs(proj_depth[msk_i] - depthmaps[j][msk_j])> 0.1)
+            bad_msk_i = msk_i.clone()
+            bad_msk_i[msk_i] = bad_points
+            res[i][bad_msk_i] = res[i][bad_msk_i].clip_(max=bad_conf)
+
+    return res
+    
 def read_and_resize_depths(folder_path, target_size=(512, 288)):
     depth_images = []
     file_names = sorted(os.listdir(folder_path))

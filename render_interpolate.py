@@ -48,16 +48,24 @@ def render_sets(dataset, save_dir, opt, pipe, checkpoint_iterations, checkpoint)
     opt_train_depth = True
     opt_train_normal = True
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, opt_train_depth, opt_train_normal, load_iteration = checkpoint_iterations, gap = pipe.interval)
+    scene = Scene(dataset, gaussians, opt_train_depth, opt_train_normal, load_iteration = checkpoint_iterations)
     gaussians.training_setup(opt)
     assert(checkpoint != None)    
     (model_params, first_iter) = torch.load(checkpoint)
     gaussians.restore(model_params, opt)
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")    
+    kernel_size = dataset.kernel_size
 
     trainCameras = scene.getTrainCameras().copy()
-    gaussians.compute_3D_filter(cameras=trainCameras)      
+    if dataset.disable_filter3D:
+        gaussians.reset_3D_filter()
+    else:
+        gaussians.compute_3D_filter(cameras=trainCameras)
+
+    require_depth = not dataset.use_coord_map
+    require_coord = dataset.use_coord_map
+    reg_kick_on = False
 
     render_dir = os.path.join(dataset.model_path, f'interpolate/ours_{checkpoint_iterations}/renders')
     if not os.path.exists(render_dir):
@@ -74,9 +82,10 @@ def render_sets(dataset, save_dir, opt, pipe, checkpoint_iterations, checkpoint)
             camera_center = virtual_camera_center[num]
             world_view_transform = virtual_world_view_transform[num]
             full_proj_transform = virtual_full_proj_transform[num]
-            render_pkg_point = render_point(viewpoint_cam, gaussians, \
-                        camera_center, world_view_transform, full_proj_transform, \
-                        pipe, background) 
+            render_pkg_point = render_point(viewpoint_cam, gaussians, kernel_size,\
+                    camera_center, world_view_transform, full_proj_transform, \
+                    pipe, background, require_coord = require_coord and reg_kick_on, require_depth = require_depth and reg_kick_on) 
+  
             image = render_pkg_point["render"].permute(1,2,0)
             torchvision.utils.save_image(image.permute(2, 0, 1), os.path.join(render_dir, "{0:05d}".format(num) + ".png") )
 

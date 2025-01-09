@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-from moviepy.editor import *
+from moviepy import VideoFileClip, vfx
 
 
 if __name__ == '__main__':

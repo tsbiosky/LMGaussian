@@ -51,12 +51,14 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self._dataset = ""
-        self.w_mask = False
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-        self.use_decoupled_appearance = False
+        self.use_decoupled_appearance = True
+        self.use_coord_map = False
+        self.disable_filter3D = False
+        self.kernel_size = 0.0 # Size of 2D filter in mip-splatting
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -69,7 +71,6 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
-        self.interval = 1
         super().__init__(parser, "Pipeline Parameters")
 
 
@@ -77,7 +78,7 @@ class OptimizationParams360(ParamGroup):
     def __init__(self, parser):
         self.iterations = 30_000
         self.position_lr_init = 0.0001
-        self.position_lr_final =  0.00001
+        self.position_lr_final =  0.000001
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
         self.feature_lr = 0.0025
@@ -94,43 +95,12 @@ class OptimizationParams360(ParamGroup):
         self.opacity_reset_interval = 50000
         self.densify_from_iter = 12000
         self.densify_until_iter = 12000
-        self.regularization_from_iter = 30000#6000
+        self.regularization_from_iter = 30000
         self.densify_grad_threshold = 0.0002
         self.opt_train_depth = True
         self.opt_train_normal = True
 
         super().__init__(parser, "Optimization Parameters")
-
-class OptimizationParamsinstant(ParamGroup):
-    def __init__(self, parser):
-        self.iterations = 12_000
-        self.position_lr_init = 0.0001
-        self.position_lr_final = 0.000001
-        self.position_lr_delay_mult = 0.01
-        self.position_lr_max_steps = 12_000
-        self.feature_lr = 0.005
-        self.opacity_lr = 0.065
-        self.scaling_lr = 0.015
-        self.rotation_lr = 0.003
-        self.appearance_embeddings_lr = 0.001
-        self.appearance_network_lr = 0.001
-        self.percent_dense = 0.01
-        self.lambda_dssim = 0.2
-        self.lambda_distortion = 100
-        self.lambda_depth_normal = 0.05
-        self.densification_interval = 200
-        self.opacity_reset_interval = 5000
-        self.densify_from_iter = 1000
-        self.densify_until_iter = 1000
-        self.regularization_from_iter = 6000
-        self.densify_grad_threshold = 0.0002
-        self.opt_train_depth = True
-        self.opt_train_normal = True
-
-        super().__init__(parser, "Optimization Parameters")
-
-
-
 
 
 def get_combined_args(parser : ArgumentParser):

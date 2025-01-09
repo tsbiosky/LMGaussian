@@ -8,6 +8,11 @@ Official implementation of LM-Gaussian: Boost Sparse-view 3D Gaussian Splatting 
 
 Abstract: *We aim to address sparse-view reconstruction of a 3D scene by leveraging priors from large-scale vision models. While recent advancements such as 3D Gaussian Splatting (3DGS) have demonstrated remarkable success in 3D reconstruction, these methods typically necessitate hundreds of input images that densely capture the underlying scene, making them time-consuming and impractical for real-world applications. However, sparse-view reconstruction is inherently ill-posed and under-constrained, often resulting in inferior and incomplete outcomes. This is due to issues such as failed initialization, overfitting to input images, and a lack of detail. To mitigate these challenges, we introduce LM-Gaussian, a method capable of generating high-quality reconstructions from a limited number of images. Specifically, we propose a robust initialization module that leverages stereo priors to aid in the recovery of camera poses and the reliable initialization of point clouds. Additionally, a diffusion-based refinement is iteratively applied to incorporate image diffusion priors into the Gaussian optimization process to preserve intricate scene details. Finally, we utilize video diffusion priors to further enhance the rendered images for realistic visual effects. Overall, our approach significantly reduces the data acquisition requirements compared to previous 3DGS methods. We validate the effectiveness of our framework through experiments on various public datasets, demonstrating its potential for high- quality 360-degree scene reconstruction.*
 
+# Modifications
+
+1. We update the RaDe-GS part and accelerate the training process.
+2. Fix some known bugs.
+
 ## Method
 
 Our method takes unposed sparse images as inputs. For example, we select 8 images from the Horse Scene to cover a 360-degree view. Initially, we utilize a Background-Aware Depth-guided Initialization Module to generate dense point clouds and camera poses (see Section IV-B). These variables act as the initialization for the Gaussian kernels. Subsequently, in the Multi-modal Regularized Gaussian Reconstruction Module (see Section IV-C), we collectively optimize the Gaussian network through depth, normal, and virtual-view regularizations. After this stage, we train a Gaussian Repair model capable of enhancing Gaussian-rendered new view images. These improved images serve as guides for the training network, iteratively restoring Gaussian details (see Section IV-D). Finally, we employ a scene enhancement module to further enhance the rendered images for realistic visual effects (see Section IV-E).
@@ -20,25 +25,37 @@ Our method takes unposed sparse images as inputs. For example, we select 8 image
 
 ## 🚀 Setup
 
-### CUDA
+### Clone this repository.
+```
+git clone https://github.com/hanyangyu1021/LMGaussian.git --recursive
+```
 
-LM-Gaussian is tested with CUDA 11.8.
+### Install dependencies.
+1. create an environment(LM-Gaussian is tested with CUDA 11.8, Python 3.10.12)
+```
+conda env create --file environment.yml
+conda activate lmgaussian
+```
 
-### Cloning the Repository
+2. install submodules
+```
+pip install submodules/diff-gaussian-rasterization
+pip install submodules/simple-knn/
+pip install submodules/minLoRA
 
-<ol>
-    <li>
-        <strong>Clone LM-Gaussian and download relevant models:</strong>
-        <pre><code>git clone https://github.com/hanyangyu1021/LMGaussian.git --recursive</code></pre>
-    </li>
-    <li>
-        <strong>Create the environment:</strong>
-       LM-Gaussian is tested on Python 3.10.12. Requirements are listed in requirements.txt. You can install them with<br>
-        <pre><code>conda env create --file environment.yml
-    </li>
-</ol>
+# tetra-nerf for Marching Tetrahedra
+cd submodules/tetra-triangulation
+conda install cmake
+conda install conda-forge::gmp
+conda install conda-forge::cgal
+cmake .
+# you can specify your own cuda path
+# export CPATH=/usr/local/cuda-11.8/targets/x86_64-linux/include:$CPATH
+make 
+pip install -e .
+```
 
-### Get Monocular Depth/Normal Maps
+### Get Monocular Depth/Normal Maps ( Marigold / Depthanything )
 
 <p>Put unposed sparse images in the <code>'./data/{dataset_name}/train/images/'</code> folder. Checkpoints can be found at:
 <ul>
@@ -54,7 +71,7 @@ Download the relevant checkpoints to
 <code>./Marigold/checkpoint/marigold-normals-lcm-v0-1/</code>
 
 </p>
-<pre><code>python Marigold/getmonodepthnormal.py -s data/horse16</code></pre>
+<pre><code>python Marigold/getmonodepthnormal.py -s data/horse_8</code></pre>
 
 ### Dense Initialization
 
@@ -70,11 +87,11 @@ Download the dust3r checkpoint <code>"DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth"</
     </a>
 </p>
 Here we provide a simple example of horse scene in TNT. You can find the data in ./data
-<pre><code>python dust3r/coarse_initialization.py -s data/horse16</code></pre>
+<pre><code>python dust3r/coarse_initialization.py -s data/horse_8</code></pre>
 
 ### Multi-modal Regularized Reconstruction
 
-<pre><code>python stage1_360.py -s data/horse16 --save outputs/horse16</code></pre>
+<pre><code>python stage1_360.py -s data/horse_8 -r 2 --save outputs/horse_8</code></pre>
 
 <h3>Train Repair model</h3>
 
@@ -93,15 +110,14 @@ Here we provide a simple example of horse scene in TNT. You can find the data in
 
 Download clip-vit-large-patch14 model to ./[openai](https://huggingface.co/openai/clip-vit-large-patch14)
 
-<pre><code>python train_repairmodel.py   --exp_name outputs/controlnet_finetune/horse16 --prompt "any prompt describe the scene" --resolution 1 --gs_dir outputs/horse16 --data_dir data/horse16   --bg_white </code></pre>
+<pre><code>python train_repairmodel.py   --exp_name outputs/controlnet_finetune/horse_8 --prompt "any prompt describe the scene" --resolution 1 --gs_dir outputs/horse_8 --data_dir data/horse_8   --bg_white </code></pre>
 
 <h2>Iterative refinement</h2>
-<pre><code>python stage2_360.py  -s data/horse16  --exp_name outputs/controlnet_finetune/horse16 --prompt "any prompt describe the scene" --bg_white  --start_checkpoint "outputs/horse16/chkpnt12000.pth"</code></pre>
-<pre><code>python stage2_forward.py  -s data/barn3 --exp_name outputs/controlnet_finetune/barn3 --prompt "Houses, playground, outdoor" --bg_white  --start_checkpoint "outputs/barn3/chkpnt6000.pth"</code></pre>
+<pre><code>python stage2_360.py  -s data/horse_8  --exp_name outputs/controlnet_finetune/horse_8 --prompt "any prompt describe the scene" --bg_white  --start_checkpoint "outputs/horse_8/chkpnt6000.pth"</code></pre>
 
 ### Render video & Scene enhancement
 
-<pre><code>python render_interpolate.py -s data/horse16 --start_checkpoint outputs/horse16/chkpnt30000.pth</code></pre>
+<pre><code>python render_interpolate.py -s data/horse_8 --start_checkpoint outputs/horse_8/chkpnt30000.pth</code></pre>
 
 Checkpoints can be found at:
 
@@ -114,7 +130,11 @@ Download the checkpoints to
 <code>./models/zeroscope_v2_XL/</code>
 
 </p>
-<pre><code>python scene_enhance.py --model_path ./models/zeroscope_v2_XL --input_path outputs/horse16/30000_render_video.mp4</code></pre>
+<pre><code>python scene_enhance.py --model_path ./models/zeroscope_v2_XL --input_path outputs/horse8/30000_render_video.mp4</code></pre>
+
+### We also provide a simply script to run.
+</p>
+<pre><code>bash scripts/run_num.sh</code></pre>
 
 ## 🤗Acknowledgement
 

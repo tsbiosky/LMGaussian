@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from dust3r.utils.device import to_numpy
 from argparse import ArgumentParser
+import time
 
 def uint8(colors):
     if not isinstance(colors, np.ndarray):
@@ -109,7 +110,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="DUST3R intialization parameters")
     parser.add_argument('-s', type=str, help='Path to the data directory')
     args = parser.parse_args()
-
+    start = time.time()
     model_path = "checkpoints/DUSt3R_ViTLarge_BaseDecoder_512_dpt.pth"
     device = 'cuda'
     batch_size = 1
@@ -122,6 +123,7 @@ if __name__ == '__main__':
     dataset_path = '../' + args.s
     dataset_path_train = dataset_path + '/train'
     dest_train = dataset_path_train + '/images'
+    depth_path = dataset_path_train + '/depth_maps'
    
     print("incremental dust3r initialization")
 
@@ -131,7 +133,7 @@ if __name__ == '__main__':
     output = inference(pairs, model, device, batch_size=batch_size)
     scene = global_aligner(output, device=device, mode=GlobalAlignerMode.ModularPointCloudOptimizer, depth_path = None) 
     loss = scene.compute_global_alignment(init="mst", niter=niter, schedule=schedule, lr=lr)
-    scene.clean_pointcloud_final()
+    scene = scene.clean_pointcloud_final()
     depths = scene.get_depthmaps()
     save_depths_to_folder(dataset_path_train + '/dust3r_depth', depths)
     imgs0 = scene.imgs
@@ -146,6 +148,7 @@ if __name__ == '__main__':
     cc = [imgs0[0].shape[1] / 2.0, imgs0[0].shape[0] / 2.0]
     save_cams(dataset_path_train, poses0, av_focal0, imgs_name, cc)
     save_point3dply_downsample(dataset_path_train, pts3ds0, confidence_masks0, imgs0, 1)
-
+    end = time.time()
+    print(f" coarse initalization: {end - start:.4f} 秒")
 
 

@@ -17,9 +17,6 @@ from math import exp
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 
-def lpips_loss(network_output, gt):
-    return torch.abs((network_output - gt)).mean()
-
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
@@ -65,73 +62,25 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
     
+def _ncc(img1, img2, window, window_size, channel, size_average=True):
+    mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
+    mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
 
-    
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
 
-def loss_depth_smoothness(depth, img):
-    img_grad_x = img[:, :, :, :-1] - img[:, :, :, 1:]
-    img_grad_y = img[:, :, :-1, :] - img[:, :, 1:, :]
-    weight_x = torch.exp(-torch.abs(img_grad_x).mean(1).unsqueeze(1))
-    weight_y = torch.exp(-torch.abs(img_grad_y).mean(1).unsqueeze(1))
+    sigma1_sq = F.conv2d(img1 * img1, window, padding=window_size // 2, groups=channel) - mu1_sq
+    sigma2_sq = F.conv2d(img2 * img2, window, padding=window_size // 2, groups=channel) - mu2_sq
 
-    loss = (((depth[:, :, :, :-1] - depth[:, :, :, 1:]).abs() * weight_x).sum() +
-            ((depth[:, :, :-1, :] - depth[:, :, 1:, :]).abs() * weight_y).sum()) / \
-           (weight_x.sum() + weight_y.sum())
-    return loss
+    sigma1 = torch.sqrt(sigma1_sq + 1e-4)
+    sigma2 = torch.sqrt(sigma2_sq + 1e-4)
 
-def loss_depth_grad(depth, img):
-    img_grad_x = img[:, :, :, :-1] - img[:, :, :, 1:]
-    img_grad_y = img[:, :, :-1, :] - img[:, :, 1:, :]
-    weight_x = img_grad_x / (torch.abs(img_grad_x) + 1e-6)
-    weight_y = img_grad_y / (torch.abs(img_grad_y) + 1e-6)
+    image1_norm = (img1 - mu1) / (sigma1 + 1e-8)
+    image2_norm = (img2 - mu2) / (sigma2 + 1e-8)
 
-    depth_grad_x = depth[:, :, :, :-1] - depth[:, :, :, 1:]
-    depth_grad_y = depth[:, :, :-1, :] - depth[:, :, 1:, :]
-    grad_x = depth_grad_x / (torch.abs(depth_grad_x) + 1e-6)
-    grad_y = depth_grad_y / (torch.abs(depth_grad_y) + 1e-6)
+    ncc = F.conv2d((image1_norm * image2_norm), window, padding=0, groups=channel)
 
-    loss = l1_loss(grad_x, weight_x) + l1_loss(grad_y, weight_y)
-    return loss
-
-def margin_l2_loss(network_output, gt, margin, return_mask=False):
-    mask = (network_output - gt).abs() > margin
-    if not return_mask:
-        return ((network_output - gt)[mask] ** 2).mean()
-    else:
-        return ((network_output - gt)[mask] ** 2).mean(), mask
-    
-def margin_l1_loss(network_output, gt, margin, return_mask=False):
-    mask = (network_output - gt).abs() > margin
-    if not return_mask:
-        return ((network_output - gt)[mask].abs()).mean()
-    else:
-        return ((network_output - gt)[mask].abs()).mean(), mask
-    
-
-def kl_loss(input, target):
-    input = F.log_softmax(input, dim=-1)
-    target = F.softmax(target, dim=-1)
-    return F.kl_div(input, target, reduction="batchmean")
-
-
-def normalize(input, mean=None, std=None):
-    input_mean = torch.mean(input, dim=1, keepdim=True) if mean is None else mean
-    input_std = torch.std(input, dim=1, keepdim=True) if std is None else std
-    return (input - input_mean) / (input_std + 1e-2*torch.std(input.reshape(-1)))
-
-def lpr_loss2(gsplat_render_maps, point_render_maps, device):
-    total_loss = 0.0
-    for gsplat_render, point_render in zip(gsplat_render_maps, point_render_maps):
-        point_render = torch.tensor(point_render, dtype=torch.float32).to(device)
-
-        # Calculate the mean squared error between the images
-        loss = torch.abs((gsplat_render - point_render)).mean()
-        total_loss += loss
-
-    # Calculate the average loss across all images
-    avg_loss = total_loss / len(gsplat_render_maps)
-
-    return avg_loss
+    return torch.mean(ncc, dim=2)
 
 def lpr_loss(gsplat_render, point_render, device):
     if not isinstance(point_render, torch.Tensor):
@@ -140,6 +89,15 @@ def lpr_loss(gsplat_render, point_render, device):
     loss = torch.abs((gsplat_render - point_render)).mean()
 
     return loss
+    
+import lpips
+def lpips_loss(gsplat_render, point_render, loss_fn, device):
+    if not isinstance(point_render, torch.Tensor):
+        point_render = torch.tensor(point_render, dtype=torch.float32).to(device)
+
+    lpips_loss = loss_fn(gsplat_render.permute(2,0,1).unsqueeze(0), point_render.permute(2,0,1).unsqueeze(0))
+    
+    return lpips_loss.mean()
 
 def pearson_depth_loss(depth_src, depth_target):
     src = depth_src - depth_src.mean()
@@ -173,3 +131,5 @@ def local_pearson_loss(depth_src, depth_target, box_p, p_corr):
     )
 
     return _loss / n_corr
+
+

@@ -22,6 +22,7 @@ from arguments import PipelineParams
 from scene.cameras import Camera
 from utils.graphics_utils import focal2fov
 import cv2
+import time
 
 def load_statistics_info(info_path):
     with open(info_path, "rb") as f:
@@ -263,8 +264,8 @@ if __name__ == '__main__':
     parser.add_argument('--sh_degree', type=int, default=3)
     parser.add_argument('--image_size', type=int, default=512)
     parser.add_argument('--resolution', type=int, default=1)
-    parser.add_argument('--gs_dir', type=str, default=f'output/horse16')
-    parser.add_argument('--data_dir', type=str, default=f'data/horse16')
+    parser.add_argument('--gs_dir', type=str, default=f'output/horse8')
+    parser.add_argument('--data_dir', type=str, default=f'data/horse8')
     parser.add_argument('--prompt', type=str, default='high quality, sharp outside scene')
     parser.add_argument('--exp_name', type=str, default=f'controlnet_finetune/horse16')
     parser.add_argument('--bg_white', action='store_true', default=False)
@@ -313,7 +314,7 @@ if __name__ == '__main__':
 
     add_lora(model.cond_stage_model, lora_config=lora_config)
 
-
+    start = time.time()
 
     exp_path = args.exp_name
     dataset = GSDataset(
@@ -349,3 +350,5 @@ if __name__ == '__main__':
     )
 
     trainer.fit(model, dataloader)
+    end = time.time()
+    print(f"train lora: {end - start:.4f} 秒")

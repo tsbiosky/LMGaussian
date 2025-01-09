@@ -52,7 +52,6 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
 
-
 def fetchPly_scale(path, scale):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
@@ -227,7 +226,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=13):
+def readColmapSceneInfo(path, images, eval, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -243,12 +242,12 @@ def readColmapSceneInfo(path, images, eval, llffhold=13):
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    # if eval:
-    #     train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
-    #     test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-    # else:
-    train_cam_infos = cam_infos
-    test_cam_infos = []
+    if eval:
+        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+    else:
+        train_cam_infos = cam_infos
+        test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
     print(f'cameras extent: {nerf_normalization["radius"]}')
@@ -318,18 +317,17 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             FovY = fovy 
             FovX = fovx
 
-
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], depth=None, mask=None))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], mask=None))
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png", gap = 1):
+def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
     test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
-    train_cam_infos = train_cam_infos[::gap]
+    train_cam_infos = train_cam_infos
     print("train num:", len(train_cam_infos))
     # if not eval:
     #     train_cam_infos.extend(test_cam_infos)
@@ -364,77 +362,131 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png", gap = 
 def readCamerasFromDUST3R(img_path, cam_path, white_background, extension=".jpg", scale = 50, dep_path = None, nor_path = None):
     cam_infos = []
     image_files = sorted(os.listdir(img_path))
-    cam_files = sorted(os.listdir(cam_path))
-    if dep_path != None:
-        dep_files = sorted(os.listdir(dep_path))
-    if nor_path != None:
-        nor_files = sorted(os.listdir(nor_path))
-    idx = 0
-    for image_file in image_files:
+
+    for idx, image_file in enumerate(image_files):
         image_name = os.path.splitext(image_file)[0]
-        idx += 1
         cam_file = f"{image_name}_cam.txt"
         dep_file = f"depth_{image_name}.png"
         nor_file = f"normal_{image_name}.png"
-        if cam_file in cam_files:
-            image_path = os.path.join(img_path, image_file)
-            camera_path = os.path.join(cam_path, cam_file)
-        else :
-            raise Exception("Error message: no cam file exits matched with{image_file}")
-        
-        image = Image.open(image_path)
+
+        if cam_file not in os.listdir(cam_path):
+            raise Exception(f"Error message: no cam file exists matched with {image_file}")
+
+        image_path = os.path.join(img_path, image_file)
+        camera_path = os.path.join(cam_path, cam_file)
+
+        # Load and process image
+        image = Image.open(image_path).convert("RGBA")
         W1, H1 = image.size
-        # W2, H2 = 512, 288  #320
-        im_data = np.array(image.convert("RGBA"))
-        bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
-
+        im_data = np.array(image)
+        bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])    
         norm_data = im_data / 255.0
-        arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-        image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+        arr = norm_data[:, :, :3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+        image = Image.fromarray((arr * 255.0).astype(np.uint8), "RGB")
 
-        if  dep_path != None and dep_file in dep_files:
+        # Load depth data
+        depth = None
+        if dep_path is not None and dep_file in os.listdir(dep_path):
             depth_path = os.path.join(dep_path, dep_file)
-            depth = cv2.imread(depth_path, -1)
-            depth = (depth / 1000).astype(np.float32) 
+            depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            depth = (depth.astype(np.float32) / 1000.0)
             depth = cv2.resize(depth, (W1, H1), interpolation=cv2.INTER_LINEAR)
-        else: 
-            depth = None
 
-        if  nor_path != None and nor_file in nor_files:
+        # Load normal data
+        normal = None
+        if nor_path is not None and nor_file in os.listdir(nor_path):
             normal_path = os.path.join(nor_path, nor_file)
-            normal = cv2.imread(normal_path, -1)
-            normal = normal.astype(np.float32) 
+            normal = cv2.imread(normal_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
             normal = cv2.resize(normal, (W1, H1), interpolation=cv2.INTER_LINEAR)
-        else: 
-            normal = None
 
+        # Read camera parameters
         with open(camera_path, 'r') as file:
             lines = file.readlines()
-
-        c2w = []
-        for i in range(1,5):
-            line = lines[i].strip().split()
-            row = [float(val) for val in line]
-            c2w.append(row)
-        c2w = np.array(c2w)
+        
+        # Extract camera-to-world transformation
+        c2w = np.array([list(map(float, lines[i].strip().split())) for i in range(1, 5)])
         w2c = np.linalg.inv(c2w)
-        R = np.transpose(w2c[:3,:3])  
+        R = w2c[:3, :3].T  
         T = w2c[:3, 3] * scale
 
-        K = []
-        for i in range(7, 10):
-            line = lines[i].strip().split()
-            row = [float(val) for val in line]
-            K.append(row)
-        K = np.array(K)
-        W2, H2 = K[0][2]*2, K[1][2]*2  
-        FovX = focal2fov(K[0,0],W2)
-        FovY = focal2fov(K[1,1],H2)
-        intrinsic = np.array([fov2focal(FovX, W1), fov2focal(FovY, H1), W1/2, H1/2])
-        intrinsic = np.array([[fov2focal(FovX, W1), 0, W1/2],[0, fov2focal(FovY, H1), H1/2],[0,0,1]])
+        # Intrinsic parameters
+        K = np.array([list(map(float, lines[i].strip().split())) for i in range(7, 10)])
+        W2, H2 = K[0][2] * 2, K[1][2] * 2  
+        FovX = focal2fov(K[0, 0], W2)
+        FovY = focal2fov(K[1, 1], H2)
+        intrinsic = np.array([[fov2focal(FovX, W1), 0, W1 / 2],
+                              [0, fov2focal(FovY, H1), H1 / 2],
+                              [0, 0, 1]])
+        
         extrinsic = np.eye(4)
-        extrinsic[:3,:3] = w2c[:3,:3]
-        extrinsic[:3,3] = T
+        extrinsic[:3, :3] = w2c[:3, :3]
+        extrinsic[:3, 3] = T
+    # idx = 0
+    # for image_file in image_files:
+    #     image_name = os.path.splitext(image_file)[0]
+    #     idx += 1
+    #     cam_file = f"{image_name}_cam.txt"
+    #     dep_file = f"depth_{image_name}.png"
+    #     nor_file = f"normal_{image_name}.png"
+    #     if cam_file in cam_files:
+    #         image_path = os.path.join(img_path, image_file)
+    #         camera_path = os.path.join(cam_path, cam_file)
+    #     else :
+    #         raise Exception("Error message: no cam file exits matched with{image_file}")
+        
+    #     image = Image.open(image_path)
+    #     W1, H1 = image.size
+    #     # W2, H2 = 512, 288  #320
+    #     im_data = np.array(image.convert("RGBA"))
+    #     bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
+
+    #     norm_data = im_data / 255.0
+    #     arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+    #     image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+
+    #     if  dep_path != None and dep_file in dep_files:
+    #         depth_path = os.path.join(dep_path, dep_file)
+    #         depth = cv2.imread(depth_path, -1)
+    #         depth = (depth / 1000).astype(np.float32) 
+    #         depth = cv2.resize(depth, (W1, H1), interpolation=cv2.INTER_LINEAR)
+    #     else: 
+    #         depth = None
+
+    #     if  nor_path != None and nor_file in nor_files:
+    #         normal_path = os.path.join(nor_path, nor_file)
+    #         normal = cv2.imread(normal_path, -1)
+    #         normal = normal.astype(np.float32) 
+    #         normal = cv2.resize(normal, (W1, H1), interpolation=cv2.INTER_LINEAR)
+    #     else: 
+    #         normal = None
+
+    #     with open(camera_path, 'r') as file:
+    #         lines = file.readlines()
+
+    #     c2w = []
+    #     for i in range(1,5):
+    #         line = lines[i].strip().split()
+    #         row = [float(val) for val in line]
+    #         c2w.append(row)
+    #     c2w = np.array(c2w)
+    #     w2c = np.linalg.inv(c2w)
+    #     R = np.transpose(w2c[:3,:3])  
+    #     T = w2c[:3, 3] * scale
+
+    #     K = []
+    #     for i in range(7, 10):
+    #         line = lines[i].strip().split()
+    #         row = [float(val) for val in line]
+    #         K.append(row)
+    #     K = np.array(K)
+    #     W2, H2 = K[0][2]*2, K[1][2]*2  
+    #     FovX = focal2fov(K[0,0],W2)
+    #     FovY = focal2fov(K[1,1],H2)
+    #     intrinsic = np.array([fov2focal(FovX, W1), fov2focal(FovY, H1), W1/2, H1/2])
+    #     intrinsic = np.array([[fov2focal(FovX, W1), 0, W1/2],[0, fov2focal(FovY, H1), H1/2],[0,0,1]])
+    #     extrinsic = np.eye(4)
+    #     extrinsic[:3,:3] = w2c[:3,:3]
+    #     extrinsic[:3,3] = T
         
         cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth, normal=normal,
                     image_path=image_path, image_name=image_name, width=W1, height=H1, intrinsics=intrinsic, extrinsics=extrinsic))
@@ -557,144 +609,9 @@ def readDUST3RInfo(path, white_background, depth, normal, eval, extension=".jpg"
                            ply_path=ply_path)
     return scene_info
 
-def readLLFFInfo(img_path, cam_path, white_background, extension=".jpg", scale = 50, dep_path = None, nor_path = None):
-    cam_infos = []
-    image_files = sorted(os.listdir(img_path))
-    cam_files = sorted(os.listdir(cam_path))
-    if dep_path != None:
-        dep_files = sorted(os.listdir(dep_path))
-    if nor_path != None:
-        nor_files = sorted(os.listdir(nor_path))
-    idx = 0
-    for image_file in image_files:
-        image_name = os.path.splitext(image_file)[0]
-        #idx = int(image_name)
-        idx += 1
-        cam_file = f"{image_name}_cam.txt"
-        dep_file = f"depth_{image_name}.png"
-        nor_file = f"normal_{image_name}.png"
-        if cam_file in cam_files:
-            image_path = os.path.join(img_path, image_file)
-            camera_path = os.path.join(cam_path, cam_file)
-        else :
-            raise Exception("Error message: no cam file exits matched with{image_file}")
-        
-        image = Image.open(image_path)
-        W1, H1 = image.size
-        W2, H2 = 512, 384
-        im_data = np.array(image.convert("RGBA"))
-        bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
-
-        norm_data = im_data / 255.0
-        arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-        image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
-
-        if  dep_path != None and dep_file in dep_files:
-            depth_path = os.path.join(dep_path, dep_file)
-            depth = cv2.imread(depth_path, -1)
-            depth = (depth / 1000).astype(np.float32) 
-            depth = cv2.resize(depth, (W1, H1), interpolation=cv2.INTER_LINEAR)
-        else: 
-            depth = None
-
-        if  nor_path != None and nor_file in nor_files:
-            normal_path = os.path.join(nor_path, nor_file)
-            normal = cv2.imread(normal_path, -1)
-            normal = normal.astype(np.float32) 
-            normal = cv2.resize(normal, (W1, H1), interpolation=cv2.INTER_LINEAR)
-        else: 
-            normal = None
-
-        with open(camera_path, 'r') as file:
-            lines = file.readlines()
-
-        c2w = []
-        for i in range(1,5):
-            line = lines[i].strip().split()
-            row = [float(val) for val in line]
-            c2w.append(row)
-        c2w = np.array(c2w)
-        w2c = np.linalg.inv(c2w)
-        R = np.transpose(w2c[:3,:3])  
-        T = w2c[:3, 3] * scale
-
-        K = []
-        for i in range(7, 10):
-            line = lines[i].strip().split()
-            row = [float(val) for val in line]
-            K.append(row)
-        K = np.array(K)
-        FovX = focal2fov(K[0,0],W2)
-        FovY = focal2fov(K[1,1],H2)
-        intrinsic = np.array([fov2focal(FovX, W1), fov2focal(FovY, H1), W1/2, H1/2])
-        intrinsic = np.array([[fov2focal(FovX, W1), 0, W1/2],[0, fov2focal(FovY, H1), H1/2],[0,0,1]])
-        extrinsic = np.eye(4)
-        extrinsic[:3,:3] = w2c[:3,:3]
-        extrinsic[:3,3] = T
-        
-        cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth, normal=normal,
-                    image_path=image_path, image_name=image_name, width=W1, height=H1, intrinsics=intrinsic, extrinsics=extrinsic))
-            
-    return cam_infos
-
-def readLLFFInfo(path, white_background, depth, normal, eval, extension=".jpg"): 
-    scale = 100  # dust3r scale is too small!
-    if os.path.exists(os.path.join(path, "train/cams")) and  os.path.exists(os.path.join(path, "train/images")):
-        cams_folder = os.path.join(path, "train/cams")
-        images_folder = os.path.join(path, "train/images")
-        if depth:
-            depth_folder = os.path.join(path, "train/depth_maps")
-        else: 
-            depth_folder = None
-        if normal:
-            normal_folder = os.path.join(path, "train/normal_maps")
-        else:
-            normal_folder = None
-    else:
-        raise Exception("Error message: no cams folder exits")
-    
-    train_cam_infos = readCamerasFromTankandTemples(images_folder, cams_folder, white_background, extension, scale, depth_folder, normal_folder)
-
-    if os.path.exists(os.path.join(path, "test/cams")) and  os.path.exists(os.path.join(path, "test/images")):
-        cams_folder2 = os.path.join(path, "test/cams")
-        images_folder2 = os.path.join(path, "test/images")
-        print(f'-----test_image---------')
-        test_cam_infos = readCamerasFromTankandTemples(images_folder2, cams_folder2, white_background, extension, scale)
-    else:
-        test_cam_infos = []
-
-    nerf_normalization = getNerfppNorm(train_cam_infos)
-
-    ply_path = os.path.join(path, "train/points3d.ply")
-    if not os.path.exists(ply_path):
-        # Since this data set has no colmap data, we start with random points
-        num_pts = 100_000
-        print(f"Generating random point cloud ({num_pts})...")
-        
-        # We create random points inside the bounds of the synthetic Blender scenes
-        xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
-        shs = np.random.random((num_pts, 3)) / 255.0
-        pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
-
-        storePly(ply_path, xyz, SH2RGB(shs) * 255)
-
-
-    try:
-        pcd = fetchPly_scale(ply_path, scale)
-    except:
-        pcd = None
-
-    scene_info = SceneInfo(point_cloud=pcd,
-                           train_cameras=train_cam_infos,
-                           test_cameras=test_cam_infos,
-                           nerf_normalization=nerf_normalization,
-                           ply_path=ply_path)
-    return scene_info
-
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
     "Blender" : readNerfSyntheticInfo,
     "DUST3R": readDUST3RInfo,
-    "LLFF" : readLLFFInfo,   
 }

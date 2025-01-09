@@ -11,7 +11,15 @@ dependencies:
   - pytorch=2.0.1
   - torchvision=0.15.2
   - tqdm
+  - trimesh=4.5.3
+  - transformers=4.47.1
+  - scikit-image=0.25.0
+  - roma=1.5.1
+  - opencv-python=4.10.0
+  - open_clip_torch=2.29.0
+  - einops=0.8.0
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn
     - submodules/fused-ssim
+    - submodules/tetra_triangulation

@@ -44,17 +44,13 @@ class Scene:
         self.test_cameras = {}
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, True)
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
-            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval, gap = gap)
-        elif os.path.exists(os.path.join(args.source_path, "llff.txt")):
-            print("Found llff.txt file, assuming LLFF data set!")
-            scene_info = sceneLoadTypeCallbacks["LLFF"](args.source_path, args.white_background, opt_depth, opt_normal, args.eval)
+            scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
             print("Found pair.txt file, assuming DUST3R data set!")
             scene_info = sceneLoadTypeCallbacks["DUST3R"](args.source_path, args.white_background, opt_depth, opt_normal, args.eval)
-
         
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
@@ -70,13 +66,12 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
-
-        # train poses
-        num_train_samples = len(scene_info.train_cameras)
-        self.name_list_according_to_cameras = []
-        for i in range(num_train_samples):
-            image_name = scene_info.train_cameras[i].image_name
-            self.name_list_according_to_cameras.append(image_name)
+        # # train poses
+        # num_train_samples = len(scene_info.train_cameras)
+        # self.name_list_according_to_cameras = []
+        # for i in range(num_train_samples):
+        #     image_name = scene_info.train_cameras[i].image_name
+        #     self.name_list_according_to_cameras.append(image_name)
         # test poses
         num_test_samples = len(scene_info.test_cameras)
         self.name_list_according_to_cameras_test = []
@@ -85,13 +80,13 @@ class Scene:
             self.name_list_according_to_cameras_test.append(image_name)
 
 
-        self.R_q = nn.Parameter(torch.zeros(size=(num_train_samples, 3), dtype=torch.float32), requires_grad = True)
-        self.T_q = nn.Parameter(torch.zeros(size=(num_train_samples, 3), dtype=torch.float32), requires_grad = True)
-        parameters = [{'params': [self.R_q], 'lr': 5e-4, "name": "R_q"}, {'params': [self.T_q], 'lr': 5e-4, "name": "T_q"}]
-        self.optimizer_pose = torch.optim.Adam(parameters, lr=5e-4)
-        self.scheduler_pose = torch.optim.lr_scheduler.MultiStepLR(self.optimizer_pose, 
-                                                                milestones=list(range(0, 800, 30)),
-                                                                gamma=0.9, last_epoch=-1)
+        # self.R_q = nn.Parameter(torch.zeros(size=(num_train_samples, 3), dtype=torch.float32), requires_grad = True)
+        # self.T_q = nn.Parameter(torch.zeros(size=(num_train_samples, 3), dtype=torch.float32), requires_grad = True)
+        # parameters = [{'params': [self.R_q], 'lr': 5e-4, "name": "R_q"}, {'params': [self.T_q], 'lr': 5e-4, "name": "T_q"}]
+        # self.optimizer_pose = torch.optim.Adam(parameters, lr=5e-4)
+        # self.scheduler_pose = torch.optim.lr_scheduler.MultiStepLR(self.optimizer_pose, 
+        #                                                         milestones=list(range(0, 800, 30)),
+        #                                                         gamma=0.9, last_epoch=-1)
         self.R_q_test = nn.Parameter(torch.zeros(size=(num_test_samples, 3), dtype=torch.float32), requires_grad = True)
         self.T_q_test = nn.Parameter(torch.zeros(size=(num_test_samples, 3), dtype=torch.float32), requires_grad = True)
         parameters_test = [{'params': [self.R_q_test], 'lr': 5e-4, "name": "R_q_test"}, {'params': [self.T_q_test], 'lr': 5e-4, "name": "T_q_test"}]
@@ -99,8 +94,6 @@ class Scene:
         self.scheduler_test = torch.optim.lr_scheduler.MultiStepLR(self.optimizer_test, 
                                                                 milestones=list(range(0 , 200, 20)),
                                                                 gamma=0.9, last_epoch=-1)      
-
-
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
@@ -118,12 +111,11 @@ class Scene:
                                                            "point_cloud.ply"))
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
-            self.gaussians.init_RT_seq(self.train_cameras)
+            # self.gaussians.init_RT_seq(self.train_cameras)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
-
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
